@@ -212,7 +212,7 @@ func (r *run) thread(key string, t state.Thread, tgt target) error {
 			break
 		}
 		t.LastTS = m.TS
-		if !r.qualifies(m, tgt) {
+		if !r.qualifiesReply(m, tgt, msgs[:i]) {
 			continue
 		}
 		r.emit(t.Channel, tgt, m, msgs[:i])
@@ -222,14 +222,37 @@ func (r *run) thread(key string, t state.Thread, tgt target) error {
 	return nil
 }
 
-// qualifies applies the listening rules to one message. A thread follows its
-// channel's mode: in a mentions channel a reply must mention the bot again,
-// so people can talk to each other in a thread the bot once answered in.
+// qualifies applies the channel's listening rules to one message.
 func (r *run) qualifies(m slack.Message, t target) bool {
 	if !m.Human() || m.User == r.st.Bot.UserID || !r.p.Config.Allowed(m.User) {
 		return false
 	}
 	return t.mode == config.ModeAll || item.Mentions(m.Text, r.st.Bot.UserID)
+}
+
+// qualifiesReply applies thread_replies on top of the channel's rules. In a
+// mentions channel the default lets whoever already addressed the bot in this
+// thread carry on without mentioning it again — that is how people talk —
+// while everyone else still has to, so a side conversation in the same thread
+// does not start a run per line.
+func (r *run) qualifiesReply(m slack.Message, t target, earlier []slack.Message) bool {
+	if r.qualifies(m, t) {
+		return true
+	}
+	if !r.qualifies(m, target{mode: config.ModeAll}) { // not a person, or not allowed
+		return false
+	}
+	switch r.p.Config.ThreadReplies {
+	case config.RepliesAll:
+		return true
+	case config.RepliesParticipants:
+		for _, e := range earlier {
+			if e.User == m.User && r.qualifies(e, t) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *run) emit(channel string, t target, m slack.Message, earlier []slack.Message) {

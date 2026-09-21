@@ -24,8 +24,9 @@ interval; nothing is lost.
 
 ## Conversations
 
-- **A thread follows its channel's mode.** In a `mentions` channel, replies
-  must mention the bot again.
+- **In a `mentions` channel, only people who already addressed the bot in a
+  thread continue it without a mention** (`thread_replies: participants`).
+  Anyone else's reply is ignored until they mention the bot.
 - **Only threads the bot opened a conversation on are watched.** Mentioning
   the bot in the middle of an existing human thread is not seen:
   `conversations.history` returns top-level messages only.

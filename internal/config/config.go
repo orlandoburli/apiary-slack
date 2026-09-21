@@ -24,6 +24,11 @@ const (
 	ModeMentions = "mentions"
 	ModeAll      = "all"
 
+	// Thread reply policies, for threads in a mentions channel.
+	RepliesParticipants = "participants"
+	RepliesMentions     = "mentions"
+	RepliesAll          = "all"
+
 	DefaultAPIURL          = "https://slack.com/api"
 	DefaultMaxPerPoll      = 10
 	DefaultThreadTTL       = 24 * time.Hour
@@ -43,6 +48,7 @@ type Config struct {
 	StateFile       string
 	Channels        []Channel
 	DirectMessages  bool
+	ThreadReplies   string
 	AllowedUsers    map[string]bool
 	MaxPerPoll      int
 	ThreadTTL       time.Duration
@@ -58,6 +64,7 @@ type raw struct {
 	StateFile       string    `json:"state_file"`
 	Channels        []Channel `json:"channels"`
 	DirectMessages  bool      `json:"direct_messages"`
+	ThreadReplies   string    `json:"thread_replies"`
 	AllowedUsers    []string  `json:"allowed_users"`
 	MaxPerPoll      int       `json:"max_per_poll"`
 	ThreadTTL       string    `json:"thread_ttl"`
@@ -99,6 +106,14 @@ func Parse(in map[string]any) (*Config, error) {
 		PostFailures:    r.PostFailures == nil || *r.PostFailures,
 		APIURL:          strings.TrimRight(strings.TrimSpace(r.APIURL), "/"),
 		Token:           strings.TrimSpace(os.Getenv(TokenEnv)),
+	}
+	switch r.ThreadReplies {
+	case "":
+		cfg.ThreadReplies = RepliesParticipants
+	case RepliesParticipants, RepliesMentions, RepliesAll:
+		cfg.ThreadReplies = r.ThreadReplies
+	default:
+		return nil, fmt.Errorf("thread_replies %q must be %q, %q or %q", r.ThreadReplies, RepliesParticipants, RepliesMentions, RepliesAll)
 	}
 	if cfg.APIURL == "" {
 		cfg.APIURL = DefaultAPIURL

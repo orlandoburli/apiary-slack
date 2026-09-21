@@ -27,7 +27,8 @@ in the item:
 - The message that opens a conversation is an item labelled `turn:first`.
 - A reply in the thread is a new item labelled `turn:reply`, whose body carries
   the thread so far as a transcript — including the bot's own earlier answers —
-  followed by the latest message.
+  followed by the latest message. You mention the bot once; after that, just
+  reply in the thread.
 - A DM is one running conversation: each message carries the DM's recent
   history, and the answer is posted in line rather than in a thread.
 

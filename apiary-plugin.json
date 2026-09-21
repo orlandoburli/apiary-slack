@@ -44,6 +44,11 @@
         "type": "boolean",
         "description": "Turn every direct message to the bot into an item. Defaults to false."
       },
+      "thread_replies": {
+        "type": "string",
+        "enum": ["participants", "mentions", "all"],
+        "description": "Which replies in a mentions-channel thread become items without mentioning the bot again. participants (default): from anyone who already addressed the bot in that thread. mentions: none. all: every human reply."
+      },
       "allowed_users": {
         "type": "array",
         "items": {"type": "string"},

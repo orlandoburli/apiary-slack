@@ -18,6 +18,7 @@ would never reach the process.
 | `state_file` | — (required) | Absolute path to the cursor file. Absolute because a plugin's working directory is its own install directory. |
 | `channels` | `[]` | Channels to listen in. See below. |
 | `direct_messages` | `false` | Turn every DM to the bot into an item. |
+| `thread_replies` | `participants` | Who may continue a thread in a `mentions` channel without mentioning the bot again. See below. |
 | `allowed_users` | everyone | Slack user ids (`U…`) allowed to start or continue a conversation. |
 | `max_per_poll` | `10` | Cap on items emitted per poll. The rest are picked up next poll, in order. |
 | `thread_ttl` | `24h` | How long after its last activity a thread is still watched for replies. |
@@ -37,9 +38,17 @@ At least one of `channels` / `direct_messages` is required.
 | `mode` | `mentions` | `mentions`: only messages that @mention the bot. `all`: every human message. |
 | `labels` | `[]` | Extra labels stamped on every item from the channel. |
 
-A thread follows its channel's mode. In a `mentions` channel a thread reply
-must mention the bot again — so people can talk to each other in a thread the
-bot once answered in without each line starting a run.
+### `thread_replies`
+
+In an `all` channel every reply in a watched thread is a turn. In a `mentions`
+channel, `thread_replies` decides which replies are, beyond those that mention
+the bot:
+
+| Value | |
+|---|---|
+| `participants` (default) | Replies from anyone who already addressed the bot in that thread. You mention it once, then just talk; a colleague joining in must mention it once too. |
+| `mentions` | None — every turn must mention the bot. |
+| `all` | Every human reply in the thread. |
 
 The bot must be a member of every listed channel.
 

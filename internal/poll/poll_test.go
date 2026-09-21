@@ -144,6 +144,28 @@ func TestThreadReplyCarriesTranscript(t *testing.T) {
 	}
 }
 
+func TestThreadRepliesPolicy(t *testing.T) {
+	// U1 opened the conversation; U2 never addressed the bot.
+	for policy, want := range map[string][]string{"": {"U1"}, "participants": {"U1"}, "mentions": {}, "all": {"U1", "U2"}} {
+		in := channels("mentions")
+		if policy != "" {
+			in["thread_replies"] = policy
+		}
+		h := newHarness(t, in)
+		h.fake.Add("C1", slack.Message{User: "U1", Text: "<@UBOT> what broke?", TS: ts(1)})
+		h.poll()
+		h.fake.Add("C1", slack.Message{User: "U1", Text: "where is the list?", TS: ts(2), ThreadTS: ts(1)})
+		h.fake.Add("C1", slack.Message{User: "U2", Text: "side chatter", TS: ts(3), ThreadTS: ts(1)})
+		var got []string
+		for _, it := range h.poll() {
+			got = append(got, it.Metadata["user"].(string))
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("thread_replies=%q emitted %v, want %v", policy, got, want)
+		}
+	}
+}
+
 func TestAllModeAndAllowedUsers(t *testing.T) {
 	in := channels("all")
 	in["allowed_users"] = []any{"U1"}
