@@ -148,10 +148,14 @@ func Parse(in map[string]any) (*Config, error) {
 		}
 		cfg.Channels = append(cfg.Channels, ch)
 	}
-	for _, u := range r.AllowedUsers {
-		if u = strings.TrimSpace(u); u != "" {
-			cfg.AllowedUsers[u] = true
+	for i, u := range r.AllowedUsers {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			// Never skip it: an entry fed by an unset ${VAR} would otherwise
+			// leave the list empty, and an empty list means "everyone".
+			return nil, fmt.Errorf("allowed_users[%d] is empty — if it comes from an environment variable, that variable is not set", i)
 		}
+		cfg.AllowedUsers[u] = true
 	}
 	return cfg, nil
 }

@@ -22,8 +22,7 @@
           "properties": {
             "id": {
               "type": "string",
-              "minLength": 1,
-              "description": "Slack channel id (C… or G…), not the #name."
+              "description": "Slack channel id (C… or G…), not the #name. No minLength here on purpose: the id may come from ${ENV} expansion, which is empty wherever the config is validated without the daemon's environment. The plugin rejects an empty id at run time."
             },
             "mode": {
               "type": "string",

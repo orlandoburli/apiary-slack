@@ -38,6 +38,7 @@ func TestParseRejects(t *testing.T) {
 		"not a #name":       func(m map[string]any) { m["channels"] = []any{map[string]any{"id": "#general"}} },
 		"listed twice":      func(m map[string]any) { m["channels"] = []any{map[string]any{"id": "C1"}, map[string]any{"id": "C1"}} },
 		"must be":           func(m map[string]any) { m["channels"] = []any{map[string]any{"id": "C1", "mode": "loud"}} },
+		"allowed_users[0]":  func(m map[string]any) { m["allowed_users"] = []any{""} },
 		"thread_ttl":        func(m map[string]any) { m["thread_ttl"] = "soon" },
 	}
 	t.Setenv(TokenEnv, "xoxb-1")
