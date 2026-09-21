@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "id": "dev.apiary.slack",
+  "version": "0.1.0",
+  "apiary": ">= 0.13.0-0",
+  "protocol": 1,
+  "executable": "apiary-plugin-slack",
+  "capabilities": ["source"],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "state_file": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Absolute path to the file recording per-channel cursors and tracked threads. Must be absolute: a plugin's working directory is its own install directory."
+      },
+      "channels": {
+        "type": "array",
+        "description": "Channels to listen in. The bot must be a member of each.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Slack channel id (C… or G…), not the #name."
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["mentions", "all"],
+              "description": "mentions (default): only messages that @mention the bot become items. all: every human message does."
+            },
+            "labels": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Extra labels stamped on every item from this channel, for trigger matching."
+            }
+          },
+          "required": ["id"],
+          "additionalProperties": false
+        }
+      },
+      "direct_messages": {
+        "type": "boolean",
+        "description": "Turn every direct message to the bot into an item. Defaults to false."
+      },
+      "allowed_users": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Slack user ids (U…) allowed to start or continue a conversation. Empty means anyone who can reach the bot."
+      },
+      "max_per_poll": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Cap on items emitted per poll across all channels and threads. Defaults to 10."
+      },
+      "thread_ttl": {
+        "type": "string",
+        "description": "How long after its last activity a thread is still watched for replies, as a Go duration. Defaults to 24h."
+      },
+      "max_threads": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Cap on threads watched at once; the least recently active are dropped first. Each watched thread costs one Slack API call per poll. Defaults to 50."
+      },
+      "transcript_limit": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "How many earlier thread messages a reply item carries as context. Defaults to 50."
+      },
+      "ack_reaction": {
+        "type": "string",
+        "description": "Emoji name (no colons) added to a message once Apiary dispatches it, e.g. \"eyes\". Empty disables it."
+      },
+      "post_failures": {
+        "type": "boolean",
+        "description": "Post a short notice in the thread when a run fails. Defaults to true."
+      },
+      "api_url": {
+        "type": "string",
+        "description": "Slack Web API base URL. Defaults to https://slack.com/api; override only for testing."
+      }
+    },
+    "required": ["state_file"],
+    "additionalProperties": false
+  },
+  "security": {
+    "network": true,
+    "read_paths": ["configured state_file"],
+    "write_paths": ["configured state_file"],
+    "secret_env": ["SLACK_BOT_TOKEN"]
+  }
+}

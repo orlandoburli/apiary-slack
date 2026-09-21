@@ -1,0 +1,59 @@
+# Slack conversations for Apiary, via the dev.apiary.slack source plugin.
+#
+# The plugin turns each human turn in Slack into a work item, and posts what
+# the workflow publishes back into the same thread. SLACK_BOT_TOKEN must be in
+# the daemon's environment (its .env) — it never goes in this file.
+
+# Relative entries resolve against this file's directory.
+plugin_dirs:
+  - .apiary/plugins
+
+plugins:
+  - id: dev.apiary.slack
+    # One poll is 1 call per channel + 1 per watched thread; the 10s default
+    # is tight once a few conversations are live.
+    timeout: 30s
+    config:
+      # Absolute. A plugin's working directory is its own install directory,
+      # not the project root.
+      state_file: /home/you/projects/acme/.apiary/slack-state.json
+      channels:
+        - id: C0123456789        # #eng — answer only when @mentioned
+          mode: mentions
+          labels: ["team:eng"]
+        - id: C0987654321        # #ask-apiary — every message is a question
+          mode: all
+      direct_messages: true
+      # Anyone who can reach the bot can drive an agent. Name who may.
+      allowed_users: [U01ABCDEF, U02GHIJKL]
+      ack_reaction: eyes
+
+sources:
+  - id: slack
+    type: plugin
+    poll_interval: 30s
+    config:
+      plugin: dev.apiary.slack
+
+workflows:
+  - id: slack-chat
+    trigger:
+      # `once` is the second lock: the plugin never re-emits a message it has
+      # read, and this stops a re-dispatch if one ever reappears (a restored
+      # state file). Each turn is its own item, so it never blocks a reply.
+      once: true
+      match:
+        # Always pin the source. Unpinned, a write-back step validates against
+        # any other source in the hive and then silently no-ops here.
+        source: slack
+        labels: ["slack"]
+    # The final answer goes back to the thread.
+    result_comment: on_complete
+    steps:
+      - id: answer
+        agent: assistant
+        prompt: |
+          You are answering a message in Slack. The task body holds the
+          conversation so far and the latest message. Answer the latest
+          message, briefly, in Markdown. The repository is at
+          /home/you/projects/acme.

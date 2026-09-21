@@ -1,0 +1,9 @@
+/bin/
+/site/
+*.state.json
+coverage.out
+.DS_Store
+/docs/index.md
+/docs/LICENSE
+/docs/commercial.md
+/dist/

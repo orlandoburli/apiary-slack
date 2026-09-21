@@ -1,0 +1,81 @@
+# GoReleaser config — apiary-slack plugin distribution.
+#
+# Apiary has no plugin registry and never downloads plugins: installing one is
+# placing two files, deliberately. So each archive is built to BE that install —
+# the executable plus its manifest, nothing else to assemble. Unpack an archive
+# into <plugin_dirs>/dev.apiary.slack/ and the plugin is installed.
+version: 2
+
+project_name: apiary-slack
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: plugin
+    main: ./cmd/apiary-plugin-slack
+    # Must match the manifest's "executable" field, or apiary cannot find it.
+    binary: apiary-plugin-slack
+    env:
+      - CGO_ENABLED=0 # static: the daemon spawns this on whatever host it runs
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+
+archives:
+  - id: plugin
+    ids: [plugin]
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # wrap_in_directory is deliberately off: the archive's contents ARE the
+    # contents of the plugin directory, so `tar -xzf … -C <dir>/dev.apiary.slack`
+    # installs it in one step.
+    wrap_in_directory: false
+    files:
+      - src: apiary-plugin.json
+        dst: apiary-plugin.json
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "SHA256SUMS"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    Pick the archive for your platform, then unpack it straight into your hive's
+    plugin directory — the archive contents are the plugin directory contents:
+
+    ```bash
+    mkdir -p .apiary/plugins/dev.apiary.slack
+    tar -xzf apiary-slack_{{ .Version }}_darwin_arm64.tar.gz \
+      -C .apiary/plugins/dev.apiary.slack
+    ```
+
+    Verify the download against `SHA256SUMS`, then pin it in the manifest so
+    apiary detects a later swap of the binary:
+
+    ```bash
+    shasum -a 256 -c SHA256SUMS --ignore-missing
+    ```
+
+    Then `apiary plugins list` and `apiary validate`. Configuration is in the
+    [docs](https://orlandoburli.com.br/apiary-slack/configuration/).

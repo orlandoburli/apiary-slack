@@ -1,0 +1,35 @@
+site_name: apiary-slack
+site_description: Slack conversations for Apiary — a source plugin
+site_url: https://orlandoburli.com.br/apiary-slack/
+repo_url: https://github.com/orlandoburli/apiary-slack
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: white
+    accent: indigo
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tracking
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed: {alternate_style: true}
+  - pymdownx.highlight: {anchor_linenums: true}
+  - pymdownx.inlinehilite
+  - attr_list
+  - md_in_html
+  - tables
+
+nav:
+  - Home: index.md
+  - Configuration: configuration.md
+  - How it works: how-it-works.md
+  - Limits: limits.md
+  - Commercial: commercial.md
