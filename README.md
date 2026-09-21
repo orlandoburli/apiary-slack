@@ -103,12 +103,22 @@ workflows:
     trigger:
       once: true
       match: {source: slack, labels: ["slack"]}
-    result_comment: on_complete
+    result_comment: on_fail
     steps:
       - id: answer
         agent: assistant
-        prompt: Answer the latest Slack message in the task body, briefly.
+        prompt: |
+          Answer the latest Slack message in the task body, briefly. Put the
+          answer, and nothing else, between these markers:
+
+          APIARY_PUBLISH_BEGIN
+          <your answer>
+          APIARY_PUBLISH_END
 ```
+
+Only the published block is posted. `result_comment: on_complete` also works,
+but it wraps the output in a `Workflow: … — ✓ Done` header plus the workflow
+memory — right for an issue tracker, noise in a chat.
 
 Every option is in [Configuration](docs/configuration.md); a complete hive is in
 [examples/apiary.yaml](https://github.com/orlandoburli/apiary-slack/blob/main/examples/apiary.yaml).

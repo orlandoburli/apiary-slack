@@ -55,6 +55,9 @@ func (h *harness) poll() []pluginsdk.SourceItem {
 func (h *harness) tryPoll() ([]pluginsdk.SourceItem, error) {
 	p := &Poller{Config: h.cfg, Client: slack.New(h.cfg.APIURL, h.cfg.Token), Now: func() time.Time { return t0 }, Logf: h.t.Logf}
 	res, err := p.Poll(context.Background())
+	if err == nil && res.Items == nil {
+		h.t.Fatal("items is nil: it must encode as [] on the wire, never null")
+	}
 	return res.Items, err
 }
 

@@ -76,6 +76,12 @@ Everything a workflow writes to its source lands in the thread: the
 `result_comment`, `post_comment` steps, and any `APIARY_PUBLISH` block an agent
 emits. One item can therefore produce several replies.
 
+**For a chat, have the agent publish.** Tell it in the prompt to wrap its answer
+in `APIARY_PUBLISH_BEGIN` / `APIARY_PUBLISH_END` and set `result_comment:
+on_fail`: only the answer is posted. `result_comment: on_complete` posts
+Apiary's whole result comment — a `Workflow: … — ✓ Done` header, the workflow
+memory, then the output — which reads well on an issue and badly in a thread.
+
 Agent Markdown is converted to Slack's mrkdwn — links, bold, headings, bullets,
 blockquotes; fenced code is left alone — and anything over ~3500 characters is
 split into consecutive messages. An empty output posts nothing.

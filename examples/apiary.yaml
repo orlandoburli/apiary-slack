@@ -47,8 +47,10 @@ workflows:
         # any other source in the hive and then silently no-ops here.
         source: slack
         labels: ["slack"]
-    # The final answer goes back to the thread.
-    result_comment: on_complete
+    # Post only what the agent publishes. `result_comment: on_complete` would
+    # work too, but it wraps the output in a "Workflow: … — ✓ Done" header and
+    # the workflow memory — right for an issue tracker, noise in a chat.
+    result_comment: on_fail
     steps:
       - id: answer
         agent: assistant
@@ -57,3 +59,10 @@ workflows:
           conversation so far and the latest message. Answer the latest
           message, briefly, in Markdown. The repository is at
           /home/you/projects/acme.
+
+          Put your answer — and nothing else — between these markers. Only
+          that text is posted to Slack:
+
+          APIARY_PUBLISH_BEGIN
+          <your answer>
+          APIARY_PUBLISH_END

@@ -68,7 +68,7 @@ func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 		p.Logf("stopped watching %d thread(s): idle past thread_ttl, channel no longer configured, or over max_threads", n)
 	}
 
-	run := &run{p: p, ctx: ctx, st: st, now: now, budget: p.Config.MaxPerPoll}
+	run := &run{p: p, ctx: ctx, st: st, now: now, budget: p.Config.MaxPerPoll, items: empty.Items}
 	for _, ch := range order {
 		if stop := run.guard(run.channel(ch, targets[ch])); stop {
 			break
