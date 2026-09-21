@@ -111,7 +111,7 @@ workflows:
 ```
 
 Every option is in [Configuration](docs/configuration.md); a complete hive is in
-[examples/apiary.yaml](examples/apiary.yaml).
+[examples/apiary.yaml](https://github.com/orlandoburli/apiary-slack/blob/main/examples/apiary.yaml).
 
 > **Anyone who can message the bot can drive an agent.** Set `allowed_users`,
 > and give Slack workflows a runner with only the permissions a chat needs.
