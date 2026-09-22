@@ -83,11 +83,18 @@ var (
 	mdHeading = regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+?)[ \t]*#*$`)
 	mdQuote   = regexp.MustCompile(`(?m)^&gt;[ \t]?`)
 	mdBullet  = regexp.MustCompile(`(?m)^([ \t]*)[*-][ \t]+`)
+
+	// mrkdwnLinkLabeled / mrkdwnLinkBare restore Slack mrkdwn links that the
+	// HTML-escape pass converted to &lt;url|label&gt; / &lt;url&gt;.
+	mrkdwnLinkLabeled = regexp.MustCompile(`&lt;(https?://[^\s|>]+)\|([^>]+)&gt;`)
+	mrkdwnLinkBare    = regexp.MustCompile(`&lt;(https?://[^\s|>]+)&gt;`)
 )
 
 // Mrkdwn converts the Markdown agents write into Slack's mrkdwn: escapes the
 // three control characters, then rewrites links, bold, headings and bullets.
-// Fenced code is left untouched apart from escaping.
+// Fenced code is left untouched apart from escaping. Pre-existing Slack mrkdwn
+// links (<url|label> / <url>) that were escaped by the pass are restored so
+// they render as clickable links.
 func Mrkdwn(md string) string {
 	md = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(md)
 	parts := strings.Split(md, "```")
@@ -96,6 +103,8 @@ func Mrkdwn(md string) string {
 		p = mdQuote.ReplaceAllString(p, "> ") // a leading > is a blockquote, not text
 		p = mdBullet.ReplaceAllString(p, "$1• ")
 		p = mdLink.ReplaceAllString(p, "<$2|$1>")
+		p = mrkdwnLinkLabeled.ReplaceAllString(p, "<$1|$2>")
+		p = mrkdwnLinkBare.ReplaceAllString(p, "<$1>")
 		p = mdBold.ReplaceAllString(p, "*$1*")
 		p = mdHeading.ReplaceAllString(p, "*$1*")
 		parts[i] = p

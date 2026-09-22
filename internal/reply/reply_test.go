@@ -14,11 +14,15 @@ import (
 
 func TestMrkdwn(t *testing.T) {
 	cases := map[string]string{
-		"**bold** and [docs](https://x.dev/a?b=1)": "*bold* and <https://x.dev/a?b=1|docs>",
-		"## Summary\n- one\n  * two":               "*Summary*\n• one\n  • two",
-		"a < b && c > d":                           "a &lt; b &amp;&amp; c &gt; d",
-		"> quoted":                                 "> quoted",
-		"```\n**not bold** <tag>\n```":             "```\n**not bold** &lt;tag&gt;\n```",
+		"**bold** and [docs](https://x.dev/a?b=1)":      "*bold* and <https://x.dev/a?b=1|docs>",
+		"## Summary\n- one\n  * two":                    "*Summary*\n• one\n  • two",
+		"a < b && c > d":                                "a &lt; b &amp;&amp; c &gt; d",
+		"> quoted":                                      "> quoted",
+		"```\n**not bold** <tag>\n```":                  "```\n**not bold** &lt;tag&gt;\n```",
+		"<https://x.dev/a|click here>":                  "<https://x.dev/a|click here>",
+		"<https://x.dev/a>":                             "<https://x.dev/a>",
+		"see <https://x.dev/a|#42> and a < b":          "see <https://x.dev/a|#42> and a &lt; b",
+		"```\n<https://x.dev/a|code>\n```":              "```\n&lt;https://x.dev/a|code&gt;\n```",
 	}
 	for in, want := range cases {
 		if got := Mrkdwn(in); got != want {
