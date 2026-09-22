@@ -52,16 +52,12 @@ func Write(ctx context.Context, cfg *config.Config, client *slack.Client, req pl
 	return nil
 }
 
-// threadFor picks where the answer goes. A top-level DM is answered in line —
-// a DM is one running conversation — everything else in the message's thread.
-func threadFor(ref item.Ref) string {
-	if strings.HasPrefix(ref.Channel, "D") && ref.ThreadTS == ref.TS {
-		return ""
-	}
-	return ref.ThreadTS
-}
+// threadFor picks where the answer goes: a DM is one running conversation,
+// answered in line; a thread gets a reply.
+func threadFor(ref item.Ref) string { return ref.ThreadTS }
 
-// Acknowledge marks a dispatched message with the configured reaction.
+// Acknowledge marks the turn Apiary picked up with the configured reaction.
+// The item's metadata names that turn; without it there is nothing to react to.
 func Acknowledge(ctx context.Context, cfg *config.Config, client *slack.Client, req pluginsdk.SourceAckRequest) error {
 	if cfg.AckReaction == "" {
 		return nil
@@ -70,7 +66,11 @@ func Acknowledge(ctx context.Context, cfg *config.Config, client *slack.Client, 
 	if err != nil {
 		return err
 	}
-	return client.AddReaction(ctx, ref.Channel, ref.TS, cfg.AckReaction)
+	ts, _ := req.Item.Metadata["ts"].(string)
+	if ts == "" {
+		return nil
+	}
+	return client.AddReaction(ctx, ref.Channel, ts, cfg.AckReaction)
 }
 
 var (

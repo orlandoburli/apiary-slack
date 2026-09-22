@@ -38,15 +38,15 @@ sources:
 workflows:
   - id: slack-chat
     trigger:
-      # `once` is the second lock: the plugin never re-emits a message it has
-      # read, and this stops a re-dispatch if one ever reappears (a restored
-      # state file). Each turn is its own item, so it never blocks a reply.
-      once: true
+      # Deliberately NOT `once: true`: the item is the whole thread, and it is
+      # dispatched again for every human turn. What stops a re-run is the
+      # state — the plugin flips it from pending to answered when the host
+      # acknowledges the dispatch, and back to pending on the next turn.
       match:
         # Always pin the source. Unpinned, a write-back step validates against
         # any other source in the hive and then silently no-ops here.
         source: slack
-        labels: ["slack"]
+        states: [pending]
     # Post only what the agent publishes. `result_comment: on_complete` would
     # work too, but it wraps the output in a "Workflow: … — ✓ Done" header and
     # the workflow memory — right for an issue tracker, noise in a chat.

@@ -3,15 +3,14 @@
 //
 // poll reads new messages from the configured channels and DMs through the
 // Slack Web API — outbound calls only, no Socket Mode, no Events API, no
-// listener — and emits one work item per human turn. write_result posts what
-// the workflow publishes as a reply in the same thread. A follow-up in that
-// thread is a new work item carrying the thread so far as a transcript, which
-// is how a conversation spans turns even though plugin sources cannot resume a
-// parked task.
+// listener — and emits one work item per conversation that is waiting for an
+// answer. The item is the thread (or the DM), so every turn lands on the same
+// Apiary task; its state is `pending` until acknowledge records the dispatch,
+// and its description carries the thread so far. write_result posts what the
+// workflow publishes as a reply in the same thread.
 //
-// Pair every Slack workflow with `trigger.once: true` and pin
-// `match.source`: the plugin never re-emits a message it has read, and `once`
-// is the second lock if one ever reappears (a restored state file).
+// The Slack workflow's trigger must match `states: [pending]` and must NOT be
+// `once: true`: the same item is dispatched again for every turn.
 package main
 
 import (
@@ -55,14 +54,15 @@ func serve(ctx context.Context, req pluginsdk.Request) (any, *pluginsdk.Response
 		return result, nil
 
 	case pluginsdk.SourceMethodAcknowledge:
-		var payload pluginsdk.SourceAckRequest
-		if err := json.Unmarshal(req.Payload, &payload); err != nil {
-			return nil, errorf("invalid_payload", "%v", err)
+		// Recording the dispatch is what stops the conversation being emitted
+		// as pending on every poll, so a failure here must be surfaced.
+		payload, err := poll.DecodeAck(cfg, req.Payload)
+		if err != nil {
+			return nil, errorf("acknowledge_failed", "%v", err)
 		}
-		// A missing reaction is cosmetic; failing the ack would only add
-		// noise to the host's log.
+		// The reaction is cosmetic; failing the ack would only add noise.
 		if err := reply.Acknowledge(ctx, cfg, client, payload); err != nil {
-			logf("acknowledge %s: %v", payload.Item.ID, err)
+			logf("acknowledge %s: reaction: %v", payload.Item.ID, err)
 		}
 		return pluginsdk.SourceOKResult{OK: true}, nil
 

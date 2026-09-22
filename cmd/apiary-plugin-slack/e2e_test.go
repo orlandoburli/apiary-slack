@@ -65,18 +65,29 @@ func TestConversationRoundTrip(t *testing.T) {
 	root := slack.NowTS(time.Now().Add(time.Minute))
 	fake.Add("C1", slack.Message{User: "U1", Text: "<@UBOT> status?", TS: root})
 	items := poll()
-	if len(items) != 1 {
+	if len(items) != 1 || items[0].ID != "slack:C1:"+root || items[0].State != "pending" {
 		t.Fatalf("items = %+v", items)
 	}
 
 	if e := invoke(t, cfg, pluginsdk.SourceMethodAcknowledge, pluginsdk.SourceAckRequest{Item: items[0], Action: "dispatched"}, nil); e != nil {
 		t.Fatalf("ack: %+v", e)
 	}
+	if n := len(poll()); n != 0 {
+		t.Fatalf("still pending after ack: %d items", n)
+	}
 	if e := invoke(t, cfg, pluginsdk.SourceMethodWriteResult, pluginsdk.SourceWriteResultRequest{Item: items[0], Success: true, Output: "All **green**."}, nil); e != nil {
 		t.Fatalf("write_result: %+v", e)
 	}
-	if len(fake.Reactions) != 1 || len(fake.Posted) != 1 || fake.Posted[0] != (slacktest.Posted{Channel: "C1", ThreadTS: root, Text: "All *green*."}) {
+	if len(fake.Reactions) != 1 || fake.Reactions[0].TS != root || len(fake.Posted) != 1 || fake.Posted[0] != (slacktest.Posted{Channel: "C1", ThreadTS: root, Text: "All *green*."}) {
 		t.Fatalf("reactions %+v posted %+v", fake.Reactions, fake.Posted)
+	}
+
+	// The follow-up reopens the same item.
+	reply := slack.NowTS(time.Now().Add(2 * time.Minute))
+	fake.Add("C1", slack.Message{User: "U1", Text: "and staging?", TS: reply, ThreadTS: root})
+	items = poll()
+	if len(items) != 1 || items[0].ID != "slack:C1:"+root || items[0].Metadata["ts"] != reply {
+		t.Fatalf("follow-up = %+v", items)
 	}
 
 	if e := invoke(t, cfg, "close", nil, nil); e == nil || e.Code != "unsupported_method" {

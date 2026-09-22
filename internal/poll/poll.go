@@ -1,21 +1,22 @@
-// Package poll reads new Slack messages and turns each human turn into a work
-// item.
+// Package poll reads new Slack messages and reports each conversation that is
+// waiting for an answer as a work item.
 //
 // One poll makes two passes. The channel pass reads every listened
-// conversation's top-level messages past its cursor; a message that qualifies
-// opens a conversation and its thread starts being watched. The thread pass
-// re-reads each watched thread and emits the human replies it has not seen,
-// each carrying the thread so far as a transcript. Direct messages skip the
-// thread pass: a DM is one running conversation, so each message carries the
-// DM's recent history instead.
+// conversation's new top-level messages: a qualifying one opens a conversation
+// (its thread starts being watched; in a DM the channel itself is the
+// conversation). The thread pass re-reads each watched thread, records the
+// human turns it has not seen, and emits an item for every conversation whose
+// latest human turn is newer than the one Apiary last acknowledged. The item's
+// id names the conversation, so every turn lands on the same Apiary task.
 //
-// Cursors advance at emission, not on acknowledge: the item ids are stable, so
-// the host's dedup already covers a re-read, while waiting for an ack would
-// re-emit the same message on every poll until the run was dispatched.
+// Emission is idempotent: a pending conversation is returned on every poll
+// until acknowledge records its dispatch, and Apiary's own guards (a live
+// instance, the trigger's `states: [pending]`) decide whether it runs.
 package poll
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -43,7 +44,7 @@ type target struct {
 	labels []string
 }
 
-// Poll returns the work items for every human turn not yet emitted.
+// Poll returns a work item for every conversation awaiting an answer.
 func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 	empty := pluginsdk.SourcePollResult{Items: []pluginsdk.SourceItem{}}
 	now := p.Now()
@@ -65,7 +66,7 @@ func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 		return empty, err
 	}
 	if n := st.PruneThreads(now, p.Config.ThreadTTL, p.Config.MaxThreads, func(ch string) bool { _, ok := targets[ch]; return ok }); n > 0 {
-		p.Logf("stopped watching %d thread(s): idle past thread_ttl, channel no longer configured, or over max_threads", n)
+		p.Logf("stopped watching %d conversation(s): idle past thread_ttl, channel no longer configured, or over max_threads", n)
 	}
 
 	run := &run{p: p, ctx: ctx, st: st, now: now, budget: p.Config.MaxPerPoll, items: empty.Items}
@@ -79,16 +80,14 @@ func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 			break
 		}
 		t := st.Threads[key]
-		if stop := run.guard(run.thread(key, t, targets[t.Channel])); stop {
+		if stop := run.guard(run.conversation(key, t, targets[t.Channel])); stop {
 			break
 		}
 	}
 
-	// Saving is not optional: items about to be returned are behind the
-	// cursors being written. Returning them without the save would be
-	// harmless (stable ids), but returning an error instead keeps a broken
-	// state path loud rather than letting every poll re-read Slack from the
-	// same spot.
+	// Saving is not optional: what was read is behind the cursors being
+	// written, and a broken state path must stay loud rather than let every
+	// poll re-read Slack from the same spot.
 	if err := st.Save(p.Config.StateFile); err != nil {
 		return empty, err
 	}
@@ -96,6 +95,45 @@ func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 		return empty, run.firstErr
 	}
 	return pluginsdk.SourcePollResult{Items: run.items}, nil
+}
+
+// Acknowledge records that Apiary dispatched a conversation's item: every
+// human turn up to the one the item carried counts as handed over, so the
+// conversation stops being pending until someone writes again.
+func Acknowledge(cfg *config.Config, req pluginsdk.SourceAckRequest) error {
+	ref, err := item.ParseID(req.Item.ID)
+	if err != nil {
+		return err
+	}
+	st, err := state.Load(cfg.StateFile)
+	if err != nil {
+		return err
+	}
+	key := state.ThreadKey(ref.Channel, ref.ThreadTS)
+	t, ok := st.Threads[key]
+	if !ok {
+		return nil // pruned meanwhile; nothing to mark
+	}
+	// The item says which turn it carried; that — not whatever arrived since —
+	// is what the agent will answer.
+	ts, _ := req.Item.Metadata["ts"].(string)
+	if ts == "" || slack.CompareTS(ts, t.LastHumanTS) > 0 {
+		ts = t.LastHumanTS
+	}
+	if slack.CompareTS(ts, t.DispatchedTS) > 0 {
+		t.DispatchedTS = ts
+		st.Threads[key] = t
+	}
+	return st.Save(cfg.StateFile)
+}
+
+// DecodeAck is a convenience for main: it decodes the payload and applies it.
+func DecodeAck(cfg *config.Config, payload json.RawMessage) (pluginsdk.SourceAckRequest, error) {
+	var req pluginsdk.SourceAckRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return req, err
+	}
+	return req, Acknowledge(cfg, req)
 }
 
 // targets resolves what to listen to: configured channels, plus the bot's
@@ -136,6 +174,9 @@ type run struct {
 	items    []pluginsdk.SourceItem
 	firstErr error
 	stopped  bool
+	// replies caches each thread's messages read this poll, so emission does
+	// not read a thread twice.
+	replies map[string][]slack.Message
 }
 
 // guard records a failed read and decides whether the poll goes on. One
@@ -157,6 +198,9 @@ func (r *run) guard(err error) (stop bool) {
 	return r.stopped
 }
 
+// channel reads a conversation's new top-level messages. In a channel a
+// qualifying message opens a thread conversation; in a DM every message
+// belongs to the one running conversation.
 func (r *run) channel(id string, t target) error {
 	cur, known := r.st.Channels[id]
 	if !known {
@@ -173,54 +217,83 @@ func (r *run) channel(id string, t target) error {
 		if slack.CompareTS(m.TS, cur.Cursor) <= 0 {
 			continue
 		}
-		if r.budget <= 0 {
-			break // leave the cursor before m; next poll resumes here
-		}
 		cur.Cursor = m.TS
+		if t.kind == item.KindDM {
+			key := state.ThreadKey(id, "")
+			c := r.st.Threads[key]
+			c.Channel, c.LastTS, c.LastActivity = id, m.TS, r.now
+			if r.qualifies(m, t) {
+				c.LastHumanTS = m.TS
+				c.Turns++
+			}
+			r.st.Threads[key] = c
+			continue
+		}
 		// Replies are the thread pass's business; history only shows the
-		// ones broadcast to the channel, and those would be emitted twice.
+		// ones broadcast to the channel.
 		if m.IsReply() || !r.qualifies(m, t) {
 			continue
 		}
-		if t.kind == item.KindDM {
-			// A DM is one running conversation, answered in line rather
-			// than in a thread, so its context is the DM's recent history.
-			earlier, err := r.p.Client.Before(r.ctx, id, m.TS, r.p.Config.TranscriptLimit)
-			if err != nil {
-				r.p.Logf("dm %s: no transcript for %s: %v", id, m.TS, err)
-			}
-			r.emit(id, t, m, earlier)
-			continue
+		r.st.Threads[state.ThreadKey(id, m.TS)] = state.Thread{
+			Channel: id, ThreadTS: m.TS, LastTS: m.TS, LastHumanTS: m.TS, Turns: 1, LastActivity: r.now,
 		}
-		r.emit(id, t, m, nil)
-		r.st.Threads[state.ThreadKey(id, m.TS)] = state.Thread{Channel: id, ThreadTS: m.TS, LastTS: m.TS, LastActivity: r.now}
 	}
 	r.st.Channels[id] = cur
 	return nil
 }
 
-func (r *run) thread(key string, t state.Thread, tgt target) error {
-	msgs, err := r.p.Client.Replies(r.ctx, t.Channel, t.ThreadTS)
-	if err != nil {
-		return fmt.Errorf("thread %s: %w", key, err)
+// conversation catches up one watched conversation and emits it if pending.
+func (r *run) conversation(key string, t state.Thread, tgt target) error {
+	var msgs []slack.Message
+	var err error
+	if t.ThreadTS != "" {
+		msgs, err = r.p.Client.Replies(r.ctx, t.Channel, t.ThreadTS)
+		if err != nil {
+			return fmt.Errorf("thread %s: %w", key, err)
+		}
+		for i, m := range msgs {
+			if slack.CompareTS(m.TS, t.LastTS) <= 0 {
+				continue
+			}
+			t.LastTS = m.TS
+			if r.qualifiesReply(m, tgt, msgs[:i]) {
+				t.LastHumanTS = m.TS
+				t.Turns++
+				t.LastActivity = r.now
+			}
+		}
+		r.st.Threads[key] = t
 	}
-	for i, m := range msgs {
-		if slack.CompareTS(m.TS, t.LastTS) <= 0 {
-			continue
-		}
-		if r.budget <= 0 {
-			break
-		}
-		t.LastTS = m.TS
-		if !r.qualifiesReply(m, tgt, msgs[:i]) {
-			continue
-		}
-		r.emit(t.Channel, tgt, m, msgs[:i])
-		t.LastActivity = r.now
+	if !t.Pending() || r.budget <= 0 {
+		return nil
 	}
-	r.st.Threads[key] = t
+	if t.ThreadTS == "" {
+		// A DM's transcript is its recent history.
+		msgs, err = r.p.Client.Recent(r.ctx, t.Channel, transcriptWindow(r.p.Config))
+		if err != nil {
+			return fmt.Errorf("dm %s: %w", key, err)
+		}
+	}
+	r.items = append(r.items, item.Build(item.Input{
+		Ref:             item.Ref{Channel: t.Channel, ThreadTS: t.ThreadTS},
+		Kind:            tgt.kind,
+		Messages:        msgs,
+		DispatchedTS:    t.DispatchedTS,
+		LastHumanTS:     t.LastHumanTS,
+		Turns:           t.Turns,
+		TranscriptLimit: r.p.Config.TranscriptLimit,
+		BotUserID:       r.st.Bot.UserID,
+		TeamURL:         r.st.Bot.TeamURL,
+		Labels:          tgt.labels,
+		Pending:         true,
+	}))
+	r.budget--
 	return nil
 }
+
+// transcriptWindow is how many DM messages to read: the transcript limit plus
+// room for the unanswered turns after it.
+func transcriptWindow(cfg *config.Config) int { return cfg.TranscriptLimit + 20 }
 
 // qualifies applies the channel's listening rules to one message.
 func (r *run) qualifies(m slack.Message, t target) bool {
@@ -253,18 +326,4 @@ func (r *run) qualifiesReply(m slack.Message, t target, earlier []slack.Message)
 		}
 	}
 	return false
-}
-
-func (r *run) emit(channel string, t target, m slack.Message, earlier []slack.Message) {
-	r.items = append(r.items, item.Build(item.Input{
-		Message:         m,
-		Channel:         channel,
-		Kind:            t.kind,
-		Earlier:         earlier,
-		TranscriptLimit: r.p.Config.TranscriptLimit,
-		BotUserID:       r.st.Bot.UserID,
-		TeamURL:         r.st.Bot.TeamURL,
-		Labels:          t.labels,
-	}))
-	r.budget--
 }

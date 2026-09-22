@@ -1,14 +1,18 @@
-// Package item turns Slack messages into Apiary work items and back.
+// Package item turns a Slack conversation into an Apiary work item and back.
 //
-// Plugin sources cannot resume a parked task, so a conversation is not one
-// long-lived task: every human turn is its own work item. Continuity comes
-// from the item itself — a reply carries the thread so far as a transcript —
-// and from the id, which names the thread the answer must be posted into.
+// The item is the conversation — a thread, or a DM channel — not a message.
+// Its id is stable for the life of the conversation, so Apiary binds every
+// turn to the same task and the dashboard shows one task per thread with one
+// workflow instance per turn. What changes between turns is the item's state
+// (pending while a human turn awaits an answer, answered otherwise) and its
+// description, which carries the whole thread as a transcript. Plugin sources
+// cannot resume a parked task, so this is how a conversation spans turns.
 package item
 
 import (
 	"fmt"
 	"html"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,92 +26,161 @@ const (
 	KindMessage = "message"
 	KindDM      = "dm"
 
+	StatePending  = "pending"
+	StateAnswered = "answered"
+
 	idPrefix = "slack"
+	// dmMarker stands in for the thread ts in a DM's id: a DM is one running
+	// conversation, not a thread.
+	dmMarker = "dm"
 	// maxMessageChars bounds one message inside a transcript; a pasted log
 	// should not crowd out the rest of the conversation.
 	maxMessageChars = 4000
 	maxTitleChars   = 80
 )
 
-// Ref locates a message: where it is and which thread an answer belongs in.
+// Ref locates a conversation: the channel and, for a thread, its root.
+// ThreadTS is empty for a DM.
 type Ref struct {
 	Channel  string
 	ThreadTS string
-	TS       string
 }
 
-// ID renders the dedup key, "slack:<channel>:<thread_ts>:<ts>". It is
-// self-sufficient on purpose: write_result can find the thread from the id
-// alone, without depending on metadata surviving the round trip.
+// ID renders the dedup key, "slack:<channel>:<thread_ts>" (or "slack:<dm>:dm").
+// It is self-sufficient on purpose: write_result finds the conversation from
+// the id alone, without depending on metadata surviving the round trip.
 func (r Ref) ID() string {
-	return strings.Join([]string{idPrefix, r.Channel, r.ThreadTS, r.TS}, ":")
+	ts := r.ThreadTS
+	if ts == "" {
+		ts = dmMarker
+	}
+	return strings.Join([]string{idPrefix, r.Channel, ts}, ":")
 }
 
 // ParseID is the inverse of Ref.ID.
 func ParseID(id string) (Ref, error) {
 	parts := strings.Split(id, ":")
-	if len(parts) != 4 || parts[0] != idPrefix || parts[1] == "" || parts[2] == "" || parts[3] == "" {
-		return Ref{}, fmt.Errorf("item id %q is not slack:<channel>:<thread_ts>:<ts>", id)
+	if len(parts) != 3 || parts[0] != idPrefix || parts[1] == "" || parts[2] == "" {
+		return Ref{}, fmt.Errorf("item id %q is not slack:<channel>:<thread_ts>", id)
 	}
-	return Ref{Channel: parts[1], ThreadTS: parts[2], TS: parts[3]}, nil
+	ref := Ref{Channel: parts[1], ThreadTS: parts[2]}
+	if ref.ThreadTS == dmMarker {
+		ref.ThreadTS = ""
+	}
+	return ref, nil
 }
 
-// Input is everything needed to build one work item.
+// Input is everything needed to render one conversation.
 type Input struct {
-	Message slack.Message
-	Channel string
-	Kind    string
-	// Earlier is the thread before Message, oldest first; empty for the
-	// message that opens a conversation.
-	Earlier []slack.Message
-	// TranscriptLimit caps how many Earlier messages are carried.
+	Ref  Ref
+	Kind string
+	// Messages is the conversation so far, oldest first.
+	Messages []slack.Message
+	// DispatchedTS is the ts of the last human turn Apiary was already handed;
+	// human messages after it are the ones awaiting an answer.
+	DispatchedTS string
+	// LastHumanTS is the ts of the latest turn that qualifies for an answer.
+	LastHumanTS string
+	// Turns is how many human turns the conversation has had.
+	Turns int
+	// TranscriptLimit caps how many earlier messages are carried.
 	TranscriptLimit int
 	BotUserID       string
 	TeamURL         string
 	Labels          []string
+	// Pending is whether the conversation awaits an answer.
+	Pending bool
 }
 
-// Build renders the work item for one human turn.
+// Build renders the work item for one conversation.
 func Build(in Input) pluginsdk.SourceItem {
-	threadTS := in.Message.ThreadTS
-	if threadTS == "" {
-		threadTS = in.Message.TS
+	state := StateAnswered
+	if in.Pending {
+		state = StatePending
 	}
-	ref := Ref{Channel: in.Channel, ThreadTS: threadTS, TS: in.Message.TS}
-	text := Clean(in.Message.Text, in.BotUserID)
-	turn := "first"
-	if len(in.Earlier) > 0 {
-		turn = "reply"
+	turn := "reply"
+	if in.Turns <= 1 {
+		turn = "first"
 	}
-	at := slack.TSTime(in.Message.TS).Format(time.RFC3339)
+	root, latest := bounds(in)
+	title := "Slack conversation"
+	if root != nil {
+		title = titleOf(Clean(root.Text, in.BotUserID))
+	}
+	created := time.Now().UTC().Format(time.RFC3339)
+	if root != nil {
+		created = slack.TSTime(root.TS).Format(time.RFC3339)
+	}
+	updated := created
+	if latest != nil {
+		updated = slack.TSTime(latest.TS).Format(time.RFC3339)
+	}
 
-	labels := append([]string{"slack", "channel:" + in.Channel, "kind:" + in.Kind, "turn:" + turn}, in.Labels...)
+	labels := append([]string{"slack", "channel:" + in.Ref.Channel, "kind:" + in.Kind, "turn:" + turn}, in.Labels...)
+	number := in.Ref.Channel
+	if in.Ref.ThreadTS != "" {
+		number += "/" + in.Ref.ThreadTS
+	}
 	return pluginsdk.SourceItem{
-		ID:          ref.ID(),
-		Number:      in.Channel + "/" + in.Message.TS,
-		Title:       title(text),
-		Description: describe(in, text),
+		ID:          in.Ref.ID(),
+		Number:      number,
+		Title:       title,
+		Description: describe(in),
 		Labels:      labels,
 		Type:        "conversation",
-		URL:         Permalink(in.TeamURL, ref),
+		State:       state,
+		URL:         Permalink(in.TeamURL, in.Ref),
 		Metadata: map[string]any{
-			"channel":   ref.Channel,
-			"thread_ts": ref.ThreadTS,
-			"ts":        ref.TS,
-			"user":      in.Message.User,
+			"channel":   in.Ref.Channel,
+			"thread_ts": in.Ref.ThreadTS,
+			"ts":        in.LastHumanTS,
 			"kind":      in.Kind,
-			"turn":      turn,
+			"turns":     strconv.Itoa(in.Turns),
 		},
-		CreatedAt: at,
-		UpdatedAt: at,
+		CreatedAt: created,
+		UpdatedAt: updated,
 	}
 }
 
-func describe(in Input, text string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Slack %s from <@%s>. Your published output is posted back as a reply in the same Slack thread.\n\n", in.Kind, in.Message.User)
+// bounds returns the first and last message, or nil when there are none.
+func bounds(in Input) (root, latest *slack.Message) {
+	if len(in.Messages) == 0 {
+		return nil, nil
+	}
+	return &in.Messages[0], &in.Messages[len(in.Messages)-1]
+}
 
-	earlier := in.Earlier
+func describe(in Input) string {
+	var b strings.Builder
+	where := "thread"
+	if in.Kind == KindDM {
+		where = "direct message"
+	}
+	fmt.Fprintf(&b, "Slack %s (%s). Your published output is posted back as a reply in the same Slack %s.\n\n", in.Kind, in.Ref.ID(), where)
+
+	// Split at the dispatch watermark: everything up to and including the
+	// last dispatched human turn (and any answers to it) is context; what
+	// follows is what the person is waiting on now.
+	split := len(in.Messages)
+	for i, m := range in.Messages {
+		if m.Human() && in.DispatchedTS != "" && slack.CompareTS(m.TS, in.DispatchedTS) > 0 {
+			split = i
+			break
+		}
+	}
+	if in.DispatchedTS == "" && len(in.Messages) > 0 {
+		// Nothing dispatched yet: the whole conversation is new. Keep the
+		// latest human turn as the message to answer and the rest as context.
+		split = 0
+		for i := len(in.Messages) - 1; i >= 0; i-- {
+			if in.Messages[i].Human() {
+				split = i
+				break
+			}
+		}
+	}
+	earlier, latest := in.Messages[:split], in.Messages[split:]
+
 	if in.TranscriptLimit > 0 && len(earlier) > in.TranscriptLimit {
 		fmt.Fprintf(&b, "## Conversation so far (last %d of %d messages)\n\n", in.TranscriptLimit, len(earlier))
 		earlier = earlier[len(earlier)-in.TranscriptLimit:]
@@ -118,10 +191,23 @@ func describe(in Input, text string) string {
 		fmt.Fprintf(&b, "**%s**: %s\n\n", speaker(m, in.BotUserID), truncate(Clean(m.Text, in.BotUserID), maxMessageChars))
 	}
 	if len(earlier) > 0 {
-		b.WriteString("## Latest message\n\n")
+		if len(latest) > 1 {
+			b.WriteString("## Latest messages (unanswered)\n\n")
+		} else {
+			b.WriteString("## Latest message\n\n")
+		}
 	}
-	b.WriteString(text)
-	b.WriteString("\n")
+	for i, m := range latest {
+		text := truncate(Clean(m.Text, in.BotUserID), maxMessageChars)
+		if len(latest) == 1 && len(earlier) == 0 {
+			fmt.Fprintf(&b, "From <@%s>:\n\n%s\n", m.User, text)
+			continue
+		}
+		fmt.Fprintf(&b, "**%s**: %s\n", speaker(m, in.BotUserID), text)
+		if i < len(latest)-1 {
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 
@@ -151,11 +237,11 @@ func Mentions(text, userID string) bool {
 	return userID != "" && (strings.Contains(text, "<@"+userID+">") || strings.Contains(text, "<@"+userID+"|"))
 }
 
-func title(text string) string {
+func titleOf(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return "Slack message"
+		return "Slack conversation"
 	}
 	return truncate(line, maxTitleChars)
 }
@@ -168,15 +254,16 @@ func truncate(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
-// Permalink builds a message link from the workspace URL, saving a
-// chat.getPermalink call per item. Empty when the workspace URL is unknown.
+// Permalink builds a link to the conversation from the workspace URL, saving
+// a chat.getPermalink call per item. Empty when the workspace URL is unknown;
+// a DM links to the channel.
 func Permalink(teamURL string, ref Ref) string {
 	if teamURL == "" {
 		return ""
 	}
-	link := strings.TrimRight(teamURL, "/") + "/archives/" + ref.Channel + "/p" + strings.ReplaceAll(ref.TS, ".", "")
-	if ref.ThreadTS != ref.TS {
-		link += "?thread_ts=" + ref.ThreadTS + "&cid=" + ref.Channel
+	link := strings.TrimRight(teamURL, "/") + "/archives/" + ref.Channel
+	if ref.ThreadTS != "" {
+		link += "/p" + strings.ReplaceAll(ref.ThreadTS, ".", "")
 	}
 	return link
 }

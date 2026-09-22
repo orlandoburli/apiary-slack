@@ -20,17 +20,20 @@ Slack message ──► poll ──► work item ──► trigger ──► wor
 
 ## How a conversation works
 
-Plugin sources cannot resume a parked task, so a conversation is not one
-long-lived task. **Every human turn is its own work item**; continuity travels
-in the item:
+**A thread is one Apiary task.** The item the plugin emits is the conversation
+— a thread, or a DM channel — with a stable id (`slack:<channel>:<thread_ts>`),
+so every turn binds to the same task and the dashboard shows one task per
+thread with one workflow instance per turn. Plugin sources cannot resume a
+parked task, so continuity travels in the item instead:
 
-- The message that opens a conversation is an item labelled `turn:first`.
-- A reply in the thread is a new item labelled `turn:reply`, whose body carries
-  the thread so far as a transcript — including the bot's own earlier answers —
-  followed by the latest message. You mention the bot once; after that, just
-  reply in the thread.
-- A DM is one running conversation: each message carries the DM's recent
-  history, and the answer is posted in line rather than in a thread.
+- The item's **state** is `pending` while a human turn awaits an answer and
+  `answered` once Apiary has picked it up (the plugin records the dispatch when
+  the host acknowledges the item). The workflow trigger matches
+  `states: [pending]`, so each turn runs the workflow exactly once.
+- The item's **description** is the thread so far — including the bot's own
+  earlier answers — followed by the message(s) waiting for an answer.
+- A DM is one running conversation: the whole DM is one task, answered in
+  line rather than in a thread.
 
 More in [How it works](docs/how-it-works.md).
 
@@ -102,8 +105,9 @@ sources:
 workflows:
   - id: slack-chat
     trigger:
-      once: true
-      match: {source: slack, labels: ["slack"]}
+      # NOT once: the same item is dispatched again for every turn. `states`
+      # is what stops it re-running once the turn has been picked up.
+      match: {source: slack, states: [pending]}
     result_comment: on_fail
     steps:
       - id: answer

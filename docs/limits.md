@@ -38,8 +38,11 @@ interval; nothing is lost.
 - **Edits and deletions are ignored.** A message is read once.
 - **Files, images and Block Kit content are not passed on** — only message
   text. User mentions stay as `<@U…>` ids.
-- **Each turn is a fresh run.** The agent knows the conversation from the
-  transcript only, capped at `transcript_limit` messages of 4000 characters.
+- **Each turn is a fresh run on the same task.** The agent knows the
+  conversation from the transcript only, capped at `transcript_limit` messages
+  of 4000 characters.
+- **The trigger must be `states: [pending]` and not `once`.** Get either wrong
+  and the thread is dispatched every poll, or only its first turn ever runs.
 
 ## Read-only source
 

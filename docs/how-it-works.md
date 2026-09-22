@@ -25,42 +25,48 @@ whole design:
    *now* and emits nothing — installing the plugin never answers old messages.
    A message qualifies when a person wrote it (no bots, no joins/edits, not the
    bot itself), the author is in `allowed_users`, and — in a `mentions`
-   channel — it mentions the bot. A qualifying message becomes a `turn:first`
-   item and its thread starts being watched.
-4. **Thread pass.** For each watched thread, read the thread and emit each
-   qualifying reply not yet seen as a `turn:reply` item carrying everything
-   before it as a transcript.
-5. **Save the state file**, atomically.
+   channel — it mentions the bot. A qualifying message opens a conversation:
+   its thread starts being watched. In a DM the channel itself is the
+   conversation, and each qualifying message is a new turn in it.
+4. **Thread pass.** For each watched thread, read the thread and record the
+   qualifying replies not yet seen as new turns.
+5. **Emit** one item per conversation whose latest turn is newer than the one
+   Apiary last acknowledged: state `pending`, description = the conversation
+   so far plus the unanswered message(s).
+6. **Save the state file**, atomically.
 
-Cursors advance at emission, not on acknowledge. Item ids are stable, so
-Apiary's dedup already covers a re-read; waiting for an ack would re-emit the
-same message on every poll until its run was dispatched.
+`acknowledge` — which the host sends once it has dispatched an item — records
+the turn the item carried as handed over. The conversation stops being pending
+until someone writes again. A turn that arrives while a run is in progress
+keeps the conversation pending; Apiary's live-instance guard holds it until the
+run ends, and the next dispatch carries both turns.
 
-`max_per_poll` bounds a poll. When the budget runs out the cursor stays just
-before the first unread message, so the next poll resumes in order.
+`max_per_poll` bounds how many conversations are emitted per poll; the rest are
+emitted next time, in a stable order.
 
-## Why each turn is its own item
+## Why the thread is the task
 
 Plugin sources are read-only to Apiary's workflow engine: they cannot feed
 `resume_on`, event triggers, or `wait_for`, so a reply cannot wake a task that
-is parked waiting for one. Instead of one long-lived task per conversation,
-each human turn is a fresh item and a fresh run, and the conversation's memory
-is the transcript in the item body.
+is parked waiting for one. Instead, the conversation is one item that comes
+back as `pending` on every turn, and Apiary — which refreshes a bound task's
+description and state from the item on every poll, and re-dispatches an item
+whose earlier instance completed — runs the workflow once per turn on the same
+task. One task per thread, one instance per turn.
 
-That has a useful property: a run never blocks a conversation. Two people can
-be mid-thread with the bot at once, and a daemon restart loses nothing — the
-thread itself is the state.
+That has a useful property: a run never blocks a conversation, and a daemon
+restart loses nothing — the thread itself is the state.
 
 ## Answers
 
 `write_result` receives the item back, reads the channel and thread out of its
-id (`slack:<channel>:<thread_ts>:<ts>`), and posts there. The id is
+id (`slack:<channel>:<thread_ts>`), and posts there. The id is
 self-sufficient on purpose, so the reply never depends on metadata surviving
 the round trip. A top-level DM is answered in line; everything else in the
 message's thread.
 
-`acknowledge` adds `ack_reaction` to the message, so the person sees it was
-picked up before the answer is ready. A failed reaction is logged, never
+`acknowledge` also adds `ack_reaction` to the latest turn, so the person sees
+it was picked up before the answer is ready. A failed reaction is logged, never
 surfaced — a lost answer is.
 
 ## Failure behaviour

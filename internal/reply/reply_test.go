@@ -61,16 +61,14 @@ func TestWrite(t *testing.T) {
 		}
 	}
 
-	write("slack:C1:100.000001:100.000009", true, "**done**", "")
-	write("slack:D1:200.000001:200.000001", true, "in line", "")  // top-level DM
-	write("slack:D1:200.000001:200.000005", true, "threaded", "") // DM thread reply
-	write("slack:C1:100.000001:100.000009", true, "  ", "")       // nothing to say
-	write("slack:C1:100.000001:100.000009", false, "", "exit 1")
+	write("slack:C1:100.000001", true, "**done**", "")
+	write("slack:D1:dm", true, "in line", "")    // a DM is answered in line
+	write("slack:C1:100.000001", true, "  ", "") // nothing to say
+	write("slack:C1:100.000001", false, "", "exit 1")
 
 	want := []slacktest.Posted{
 		{Channel: "C1", ThreadTS: "100.000001", Text: "*done*"},
 		{Channel: "D1", ThreadTS: "", Text: "in line"},
-		{Channel: "D1", ThreadTS: "200.000001", Text: "threaded"},
 		{Channel: "C1", ThreadTS: "100.000001", Text: ":warning: The run failed.\n```\nexit 1\n```"},
 	}
 	if len(fake.Posted) != len(want) {
@@ -83,7 +81,7 @@ func TestWrite(t *testing.T) {
 	}
 
 	cfg.PostFailures = false
-	write("slack:C1:100.000001:100.000009", false, "", "exit 1")
+	write("slack:C1:100.000001", false, "", "exit 1")
 	if len(fake.Posted) != len(want) {
 		t.Error("post_failures: false still posted")
 	}
@@ -91,7 +89,7 @@ func TestWrite(t *testing.T) {
 		t.Error("foreign item id accepted")
 	}
 
-	if err := Acknowledge(ctx, cfg, client, pluginsdk.SourceAckRequest{Item: pluginsdk.SourceItem{ID: "slack:C1:100.000001:100.000009"}}); err != nil {
+	if err := Acknowledge(ctx, cfg, client, pluginsdk.SourceAckRequest{Item: pluginsdk.SourceItem{ID: "slack:C1:100.000001", Metadata: map[string]any{"ts": "100.000009"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.Reactions) != 1 || fake.Reactions[0] != (slacktest.Reaction{Channel: "C1", TS: "100.000009", Name: "eyes"}) {

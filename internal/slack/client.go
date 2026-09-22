@@ -166,9 +166,10 @@ func (c *Client) History(ctx context.Context, channel, oldest string) ([]Message
 	return c.paged(ctx, "conversations.history", params, maxHistoryPages)
 }
 
-// Before returns up to limit messages strictly older than latest, oldest first.
-func (c *Client) Before(ctx context.Context, channel, latest string, limit int) ([]Message, error) {
-	params := url.Values{"channel": {channel}, "latest": {latest}, "inclusive": {"false"}, "limit": {strconv.Itoa(limit)}}
+// Recent returns a conversation's most recent top-level messages, at most
+// limit, oldest first.
+func (c *Client) Recent(ctx context.Context, channel string, limit int) ([]Message, error) {
+	params := url.Values{"channel": {channel}, "limit": {strconv.Itoa(limit)}}
 	return c.paged(ctx, "conversations.history", params, 1)
 }
 

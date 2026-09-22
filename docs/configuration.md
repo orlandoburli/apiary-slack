@@ -54,17 +54,24 @@ The bot must be a member of every listed channel.
 
 ## Items
 
-Each human turn becomes one item:
+Each conversation — a thread, or a DM channel — is one item, re-emitted on every
+poll while it awaits an answer:
 
 | Field | Value |
 |---|---|
-| `id` | `slack:<channel>:<thread_ts>:<ts>` |
-| `title` | first line of the message, bot mention removed |
-| `description` | who wrote it, the conversation so far (replies and DMs), the latest message |
+| `id` | `slack:<channel>:<thread_ts>`, or `slack:<dm channel>:dm` |
+| `state` | `pending` while a human turn awaits an answer; `answered` once dispatched |
+| `title` | first line of the thread's root message, bot mention removed |
+| `description` | the conversation so far, then the message(s) awaiting an answer |
 | `labels` | `slack`, `channel:<id>`, `kind:mention\|message\|dm`, `turn:first\|reply`, plus the channel's `labels` |
 | `type` | `conversation` |
-| `url` | permalink to the message |
-| `metadata` | `channel`, `thread_ts`, `ts`, `user`, `kind`, `turn` |
+| `url` | permalink to the thread |
+| `metadata` | `channel`, `thread_ts`, `ts` (the latest turn), `kind`, `turns` |
+
+The trigger **must** match `states: [pending]` and must **not** be `once: true`:
+the same item is dispatched once per turn, and the state is what stops it
+re-running in between. Without the `states` filter an answered thread would be
+dispatched again on every poll; with `once` the second turn would never run.
 
 Route on the labels. For example, a cheap model for follow-ups and a stronger
 one for openers:
@@ -72,10 +79,10 @@ one for openers:
 ```yaml
 workflows:
   - id: slack-open
-    trigger: {once: true, match: {source: slack, labels: ["turn:first"]}}
+    trigger: {match: {source: slack, states: [pending], labels: ["turn:first"]}}
     # …
   - id: slack-follow-up
-    trigger: {once: true, match: {source: slack, labels: ["turn:reply"]}}
+    trigger: {match: {source: slack, states: [pending], labels: ["turn:reply"]}}
     # …
 ```
 
