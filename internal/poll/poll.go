@@ -274,23 +274,32 @@ func (r *run) conversation(key string, t state.Thread, tgt target) error {
 			return fmt.Errorf("dm %s: %w", key, err)
 		}
 	}
+	latestBot := ""
 	for i, m := range msgs {
+		if m.User == r.st.Bot.UserID || m.BotID != "" {
+			latestBot = m.TS // messages are oldest first
+		}
 		if slack.CompareTS(m.TS, t.LastTS) <= 0 {
 			continue
 		}
 		t.LastTS = m.TS
-		switch {
-		case t.ThreadTS != "" && r.qualifiesReply(m, tgt, msgs[:i]),
-			t.ThreadTS == "" && r.qualifies(m, tgt):
+		if (t.ThreadTS != "" && r.qualifiesReply(m, tgt, msgs[:i])) || (t.ThreadTS == "" && r.qualifies(m, tgt)) {
 			t.LastHumanTS = m.TS
 			t.Turns++
 			t.LastActivity = r.now
-		case m.User == r.st.Bot.UserID || m.BotID != "":
-			// The bot answered: whatever it was handed is done.
-			if t.EmittedTS != "" && slack.CompareTS(m.TS, t.EmittedTS) > 0 {
-				t.Answered(t.EmittedTS, newer)
-			}
 		}
+	}
+	// The bot answered: whatever it was handed is done. Judged over the whole
+	// conversation, not only the messages read this poll, so a reply that
+	// landed before this plugin version started tracking the turn — or in the
+	// same poll as its first emission — still counts.
+	switch {
+	case t.EmittedTS != "" && latestBot != "" && slack.CompareTS(latestBot, t.EmittedTS) > 0:
+		t.Answered(t.EmittedTS, newer)
+	case t.EmittedTS == "" && latestBot != "" && slack.CompareTS(latestBot, t.LastHumanTS) > 0:
+		// No run of ours on record and the bot already spoke after the latest
+		// turn: nothing is waiting.
+		t.Answered(t.LastHumanTS, newer)
 	}
 	if t.Pending() && t.Emissions >= maxEmissions {
 		r.p.Logf("conversation %s: turn %s emitted %d times without a reply — giving up on it", key, t.LastHumanTS, t.Emissions)

@@ -165,6 +165,18 @@ func TestBotReplyMarksTheTurnAnsweredWithoutAck(t *testing.T) {
 	}
 }
 
+func TestAlreadyRepliedThreadIsNotReDispatchedOnUpgrade(t *testing.T) {
+	// A thread answered before the plugin tracked turns (state v1, or a poll
+	// that missed the reply): the bot's reply is already newer than the last
+	// human turn, so nothing is pending.
+	h := newHarness(t, channels("all"))
+	h.fake.Add("C1", slack.Message{User: "U1", Text: "one", TS: ts(1)})
+	h.fake.Add("C1", slack.Message{User: slacktest.BotUserID, BotID: "BSELF", Text: "answer", TS: ts(2), ThreadTS: ts(1)})
+	if items := h.poll(); len(items) != 0 {
+		t.Fatalf("re-dispatched an answered thread: %+v", items)
+	}
+}
+
 func TestTurnArrivingDuringARunStaysPendingAfterTheReply(t *testing.T) {
 	h := newHarness(t, channels("all"))
 	h.fake.Add("C1", slack.Message{User: "U1", Text: "one", TS: ts(1)})
