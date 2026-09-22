@@ -216,6 +216,16 @@ func (c *Client) PostMessage(ctx context.Context, channel, threadTS, text string
 	return c.call(ctx, "chat.postMessage", params, nil)
 }
 
+// PostBlocks posts a Block Kit message into a thread. text is the plain
+// fallback Slack shows in notifications; blocks is the JSON-encoded array.
+func (c *Client) PostBlocks(ctx context.Context, channel, threadTS, text, blocks string) error {
+	params := url.Values{"channel": {channel}, "text": {text}, "blocks": {blocks}, "unfurl_links": {"false"}}
+	if threadTS != "" {
+		params.Set("thread_ts", threadTS)
+	}
+	return c.call(ctx, "chat.postMessage", params, nil)
+}
+
 // AddReaction reacts to a message. Reacting twice is not an error worth
 // surfacing: acknowledge can legitimately be retried.
 func (c *Client) AddReaction(ctx context.Context, channel, ts, name string) error {

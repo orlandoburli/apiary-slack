@@ -98,9 +98,14 @@ on_fail`: only the answer is posted. `result_comment: on_complete` posts
 Apiary's whole result comment — a `Workflow: … — ✓ Done` header, the workflow
 memory, then the output — which reads well on an issue and badly in a thread.
 
-Agent Markdown is converted to Slack's mrkdwn — links, bold, headings, bullets,
-blockquotes; fenced code is left alone — and anything over ~3500 characters is
-split into consecutive messages. An empty output posts nothing.
+Replies are posted as Block Kit. Prose becomes mrkdwn sections — links, bold,
+headings, bullets, blockquotes converted; fenced code left alone. A Markdown
+table (`| a | b |` rows with a `|---|---|` separator) becomes a real
+[table block](https://docs.slack.dev/reference/block-kit/blocks/table-block/):
+first row as header, cells with links, `code` or **bold** kept as rich text.
+Slack's ceilings are respected by splitting: 50 blocks and 10,000 table
+characters per message, 100 rows and 20 columns per table (the header row is
+repeated). An empty output posts nothing.
 
 ## Source options
 

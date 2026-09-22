@@ -22,7 +22,11 @@ const (
 )
 
 // Posted is one chat.postMessage call.
-type Posted struct{ Channel, ThreadTS, Text string }
+type Posted struct {
+	Channel, ThreadTS, Text string
+	// Blocks is the raw blocks JSON when the post used Block Kit.
+	Blocks string
+}
 
 // Reaction is one reactions.add call.
 type Reaction struct{ Channel, TS, Name string }
@@ -116,7 +120,7 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		write(w, map[string]any{"ok": true, "messages": out})
 	case "chat.postMessage":
-		f.Posted = append(f.Posted, Posted{channel, r.Form.Get("thread_ts"), r.Form.Get("text")})
+		f.Posted = append(f.Posted, Posted{Channel: channel, ThreadTS: r.Form.Get("thread_ts"), Text: r.Form.Get("text"), Blocks: r.Form.Get("blocks")})
 		write(w, map[string]any{"ok": true})
 	case "reactions.add":
 		f.Reactions = append(f.Reactions, Reaction{channel, r.Form.Get("timestamp"), r.Form.Get("name")})

@@ -22,7 +22,8 @@ import (
 // longer text is accepted but truncated in some clients.
 const maxChunk = 3500
 
-// Write posts the outcome. Success posts the output; failure posts a short
+// Write posts the outcome. Success posts the output as Block Kit — prose as
+// mrkdwn sections, Markdown tables as table blocks; failure posts a short
 // notice when post_failures is on. An empty output posts nothing.
 func Write(ctx context.Context, cfg *config.Config, client *slack.Client, req pluginsdk.SourceWriteResultRequest) error {
 	ref, err := item.ParseID(req.Item.ID)
@@ -38,14 +39,17 @@ func Write(ctx context.Context, cfg *config.Config, client *slack.Client, req pl
 		if detail := strings.TrimSpace(req.Error); detail != "" {
 			text += "\n```\n" + detail + "\n```"
 		}
-	} else {
-		text = Mrkdwn(text)
+		if text == "" {
+			return nil
+		}
+		return client.PostMessage(ctx, ref.Channel, threadFor(ref), text)
 	}
-	if text == "" {
-		return nil
-	}
-	for _, chunk := range Chunks(text, maxChunk) {
-		if err := client.PostMessage(ctx, ref.Channel, threadFor(ref), chunk); err != nil {
+	for _, msg := range Render(text) {
+		blocks, err := MarshalBlocks(msg.Blocks)
+		if err != nil {
+			return err
+		}
+		if err := client.PostBlocks(ctx, ref.Channel, threadFor(ref), msg.Text, blocks); err != nil {
 			return err
 		}
 	}

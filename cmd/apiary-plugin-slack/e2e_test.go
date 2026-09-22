@@ -78,7 +78,7 @@ func TestConversationRoundTrip(t *testing.T) {
 	if e := invoke(t, cfg, pluginsdk.SourceMethodWriteResult, pluginsdk.SourceWriteResultRequest{Item: items[0], Success: true, Output: "All **green**."}, nil); e != nil {
 		t.Fatalf("write_result: %+v", e)
 	}
-	if len(fake.Reactions) != 1 || fake.Reactions[0].TS != root || len(fake.Posted) != 1 || fake.Posted[0] != (slacktest.Posted{Channel: "C1", ThreadTS: root, Text: "All *green*."}) {
+	if len(fake.Reactions) != 1 || fake.Reactions[0].TS != root || len(fake.Posted) != 1 || fake.Posted[0].Text != "All *green*." || fake.Posted[0].ThreadTS != root {
 		t.Fatalf("reactions %+v posted %+v", fake.Reactions, fake.Posted)
 	}
 

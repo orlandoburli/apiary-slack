@@ -75,9 +75,13 @@ func TestWrite(t *testing.T) {
 		t.Fatalf("posted = %+v", fake.Posted)
 	}
 	for i := range want {
-		if fake.Posted[i] != want[i] {
-			t.Errorf("post %d = %+v, want %+v", i, fake.Posted[i], want[i])
+		got := fake.Posted[i]
+		if got.Channel != want[i].Channel || got.ThreadTS != want[i].ThreadTS || got.Text != want[i].Text {
+			t.Errorf("post %d = %+v, want %+v", i, got, want[i])
 		}
+	}
+	if !strings.Contains(fake.Posted[0].Blocks, `"type":"section"`) || fake.Posted[2].Blocks != "" {
+		t.Errorf("success posts use blocks, failures plain text: %q / %q", fake.Posted[0].Blocks, fake.Posted[2].Blocks)
 	}
 
 	cfg.PostFailures = false
