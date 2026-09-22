@@ -145,6 +145,39 @@ func TestConversationIsOneItemAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestBotReplyMarksTheTurnAnsweredWithoutAck(t *testing.T) {
+	// Apiary only acknowledges when settings.state_lock is on, so the plugin
+	// must read answered-ness from the thread: the bot's reply after the turn.
+	h := newHarness(t, channels("all"))
+	h.fake.Add("C1", slack.Message{User: "U1", Text: "one", TS: ts(1)})
+	if n := len(h.poll()); n != 1 {
+		t.Fatalf("emitted %d", n)
+	}
+	h.poll() // still pending: re-emitted, no ack ever arrives
+	h.fake.Add("C1", slack.Message{User: slacktest.BotUserID, BotID: "BSELF", Text: "answer", TS: ts(2), ThreadTS: ts(1)})
+	if items := h.poll(); len(items) != 0 {
+		t.Fatalf("still pending after the bot replied: %+v", items)
+	}
+	h.fake.Add("C1", slack.Message{User: "U1", Text: "two", TS: ts(3), ThreadTS: ts(1)})
+	items := h.poll()
+	if len(items) != 1 || items[0].Metadata["ts"] != ts(3) {
+		t.Fatalf("follow-up = %+v", items)
+	}
+}
+
+func TestTurnArrivingDuringARunStaysPendingAfterTheReply(t *testing.T) {
+	h := newHarness(t, channels("all"))
+	h.fake.Add("C1", slack.Message{User: "U1", Text: "one", TS: ts(1)})
+	h.poll() // dispatched: the run is answering ts(1)
+	h.fake.Add("C1", slack.Message{User: "U1", Text: "two", TS: ts(2), ThreadTS: ts(1)})
+	h.poll()
+	h.fake.Add("C1", slack.Message{User: slacktest.BotUserID, BotID: "BSELF", Text: "answer to one", TS: ts(3), ThreadTS: ts(1)})
+	items := h.poll()
+	if len(items) != 1 || items[0].Metadata["ts"] != ts(2) || !strings.Contains(items[0].Description, "(unanswered)\n\n**<@U1>**: two") {
+		t.Fatalf("turn two lost after the reply to one: %+v", items)
+	}
+}
+
 func TestTurnArrivingDuringARunStaysPending(t *testing.T) {
 	h := newHarness(t, channels("all"))
 	h.fake.Add("C1", slack.Message{User: "U1", Text: "one", TS: ts(1)})

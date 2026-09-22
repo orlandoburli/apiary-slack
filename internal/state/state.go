@@ -59,16 +59,37 @@ type Thread struct {
 	LastTS string `json:"last_ts"`
 	// LastHumanTS is the ts of the latest turn that qualifies for an answer.
 	LastHumanTS string `json:"last_human_ts"`
-	// DispatchedTS is the LastHumanTS of the item Apiary last acknowledged as
-	// dispatched. Pending means LastHumanTS is newer than this.
+	// DispatchedTS is the latest human turn Apiary has answered or been handed.
+	// Pending means LastHumanTS is newer than this.
 	DispatchedTS string `json:"dispatched_ts,omitempty"`
+	// EmittedTS is the LastHumanTS the conversation carried when it was first
+	// emitted as pending — the turn the running agent is answering. Apiary
+	// dispatches on the first emission and drops the re-emissions while the
+	// run is live, so the bot's next reply answers exactly this turn, and any
+	// turn newer than it stays pending.
+	EmittedTS string `json:"emitted_ts,omitempty"`
+	// Emissions counts polls that returned this conversation as pending since
+	// it last became pending; a loop guard for a run that never replies.
+	Emissions int `json:"emissions,omitempty"`
 	// Turns counts the human turns seen, for labels and operators.
 	Turns        int       `json:"turns"`
 	LastActivity time.Time `json:"last_activity"`
 }
 
-// Pending reports whether the conversation holds a turn not yet dispatched.
+// Pending reports whether the conversation holds a turn not yet answered.
 func (t Thread) Pending() bool { return t.LastHumanTS != "" && t.LastHumanTS != t.DispatchedTS }
+
+// Answered records that the turns up to ts have been answered or handed over,
+// and resets the emission bookkeeping when the conversation stops pending.
+func (t *Thread) Answered(ts string, newer func(a, b string) bool) {
+	if ts == "" || (t.DispatchedTS != "" && !newer(ts, t.DispatchedTS)) {
+		return
+	}
+	t.DispatchedTS = ts
+	if !t.Pending() {
+		t.EmittedTS, t.Emissions = "", 0
+	}
+}
 
 // ThreadKey names a conversation in File.Threads: a thread by its root, a DM
 // by its channel alone.

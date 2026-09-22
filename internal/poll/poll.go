@@ -10,8 +10,9 @@
 // id names the conversation, so every turn lands on the same Apiary task.
 //
 // Emission is idempotent: a pending conversation is returned on every poll
-// until acknowledge records its dispatch, and Apiary's own guards (a live
-// instance, the trigger's `states: [pending]`) decide whether it runs.
+// until the bot's reply shows up in it (or the host acknowledges the dispatch,
+// where that is configured), and Apiary's own guards (a live instance, the
+// trigger's `states: [pending]`) decide whether it runs.
 package poll
 
 import (
@@ -97,9 +98,10 @@ func (p *Poller) Poll(ctx context.Context) (pluginsdk.SourcePollResult, error) {
 	return pluginsdk.SourcePollResult{Items: run.items}, nil
 }
 
-// Acknowledge records that Apiary dispatched a conversation's item: every
-// human turn up to the one the item carried counts as handed over, so the
-// conversation stops being pending until someone writes again.
+// Acknowledge records that Apiary dispatched a conversation's item. The host
+// only sends it when `settings.state_lock` is on, so the poll does not depend
+// on it (see conversation); when it does arrive it is authoritative for the
+// turn the item carried.
 func Acknowledge(cfg *config.Config, req pluginsdk.SourceAckRequest) error {
 	ref, err := item.ParseID(req.Item.ID)
 	if err != nil {
@@ -114,18 +116,19 @@ func Acknowledge(cfg *config.Config, req pluginsdk.SourceAckRequest) error {
 	if !ok {
 		return nil // pruned meanwhile; nothing to mark
 	}
-	// The item says which turn it carried; that — not whatever arrived since —
-	// is what the agent will answer.
 	ts, _ := req.Item.Metadata["ts"].(string)
 	if ts == "" || slack.CompareTS(ts, t.LastHumanTS) > 0 {
+		ts = t.EmittedTS
+	}
+	if ts == "" {
 		ts = t.LastHumanTS
 	}
-	if slack.CompareTS(ts, t.DispatchedTS) > 0 {
-		t.DispatchedTS = ts
-		st.Threads[key] = t
-	}
+	t.Answered(ts, newer)
+	st.Threads[key] = t
 	return st.Save(cfg.StateFile)
 }
+
+func newer(a, b string) bool { return slack.CompareTS(a, b) > 0 }
 
 // DecodeAck is a convenience for main: it decodes the payload and applies it.
 func DecodeAck(cfg *config.Config, payload json.RawMessage) (pluginsdk.SourceAckRequest, error) {
@@ -217,16 +220,16 @@ func (r *run) channel(id string, t target) error {
 		if slack.CompareTS(m.TS, cur.Cursor) <= 0 {
 			continue
 		}
+		before := cur.Cursor
 		cur.Cursor = m.TS
 		if t.kind == item.KindDM {
+			// Only opens the conversation, positioned just before this message;
+			// conversation() reads the DM itself so bot replies and human turns
+			// are seen in order.
 			key := state.ThreadKey(id, "")
-			c := r.st.Threads[key]
-			c.Channel, c.LastTS, c.LastActivity = id, m.TS, r.now
-			if r.qualifies(m, t) {
-				c.LastHumanTS = m.TS
-				c.Turns++
+			if _, watched := r.st.Threads[key]; !watched && r.qualifies(m, t) {
+				r.st.Threads[key] = state.Thread{Channel: id, LastTS: before, LastActivity: r.now}
 			}
-			r.st.Threads[key] = c
 			continue
 		}
 		// Replies are the thread pass's business; history only shows the
@@ -242,7 +245,19 @@ func (r *run) channel(id string, t target) error {
 	return nil
 }
 
+// maxEmissions bounds how many polls may return the same pending turn. Apiary
+// runs the workflow once per completed instance while the item stays pending,
+// so a run that never replies would otherwise re-run forever. At 15s polls this
+// is about half an hour.
+const maxEmissions = 120
+
 // conversation catches up one watched conversation and emits it if pending.
+//
+// Whether a turn has been answered is read from the conversation itself: a
+// bot message newer than the turn the running agent was handed (EmittedTS)
+// means that turn is done. Turns that arrived while the run was live stay
+// pending and go out with the next item. The host's acknowledge, when it is
+// configured to arrive, marks the same thing earlier.
 func (r *run) conversation(key string, t state.Thread, tgt target) error {
 	var msgs []slack.Message
 	var err error
@@ -251,29 +266,45 @@ func (r *run) conversation(key string, t state.Thread, tgt target) error {
 		if err != nil {
 			return fmt.Errorf("thread %s: %w", key, err)
 		}
-		for i, m := range msgs {
-			if slack.CompareTS(m.TS, t.LastTS) <= 0 {
-				continue
-			}
-			t.LastTS = m.TS
-			if r.qualifiesReply(m, tgt, msgs[:i]) {
-				t.LastHumanTS = m.TS
-				t.Turns++
-				t.LastActivity = r.now
-			}
-		}
-		r.st.Threads[key] = t
-	}
-	if !t.Pending() || r.budget <= 0 {
-		return nil
-	}
-	if t.ThreadTS == "" {
-		// A DM's transcript is its recent history.
+	} else {
+		// A DM is read like a thread, every poll: its recent history is both
+		// the transcript and where new turns and bot replies appear.
 		msgs, err = r.p.Client.Recent(r.ctx, t.Channel, transcriptWindow(r.p.Config))
 		if err != nil {
 			return fmt.Errorf("dm %s: %w", key, err)
 		}
 	}
+	for i, m := range msgs {
+		if slack.CompareTS(m.TS, t.LastTS) <= 0 {
+			continue
+		}
+		t.LastTS = m.TS
+		switch {
+		case t.ThreadTS != "" && r.qualifiesReply(m, tgt, msgs[:i]),
+			t.ThreadTS == "" && r.qualifies(m, tgt):
+			t.LastHumanTS = m.TS
+			t.Turns++
+			t.LastActivity = r.now
+		case m.User == r.st.Bot.UserID || m.BotID != "":
+			// The bot answered: whatever it was handed is done.
+			if t.EmittedTS != "" && slack.CompareTS(m.TS, t.EmittedTS) > 0 {
+				t.Answered(t.EmittedTS, newer)
+			}
+		}
+	}
+	if t.Pending() && t.Emissions >= maxEmissions {
+		r.p.Logf("conversation %s: turn %s emitted %d times without a reply — giving up on it", key, t.LastHumanTS, t.Emissions)
+		t.Answered(t.LastHumanTS, newer)
+	}
+	if !t.Pending() || r.budget <= 0 {
+		r.st.Threads[key] = t
+		return nil
+	}
+	if t.EmittedTS == "" {
+		t.EmittedTS = t.LastHumanTS
+	}
+	t.Emissions++
+	r.st.Threads[key] = t
 	r.items = append(r.items, item.Build(item.Input{
 		Ref:             item.Ref{Channel: t.Channel, ThreadTS: t.ThreadTS},
 		Kind:            tgt.kind,

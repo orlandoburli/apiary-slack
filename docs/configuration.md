@@ -60,7 +60,7 @@ poll while it awaits an answer:
 | Field | Value |
 |---|---|
 | `id` | `slack:<channel>:<thread_ts>`, or `slack:<dm channel>:dm` |
-| `state` | `pending` while a human turn awaits an answer; `answered` once dispatched |
+| `state` | `pending` while a human turn awaits a bot reply; `answered` otherwise |
 | `title` | first line of the thread's root message, bot mention removed |
 | `description` | the conversation so far, then the message(s) awaiting an answer |
 | `labels` | `slack`, `channel:<id>`, `kind:mention\|message\|dm`, `turn:first\|reply`, plus the channel's `labels` |

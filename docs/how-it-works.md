@@ -35,11 +35,17 @@ whole design:
    so far plus the unanswered message(s).
 6. **Save the state file**, atomically.
 
-`acknowledge` — which the host sends once it has dispatched an item — records
-the turn the item carried as handed over. The conversation stops being pending
-until someone writes again. A turn that arrives while a run is in progress
-keeps the conversation pending; Apiary's live-instance guard holds it until the
-run ends, and the next dispatch carries both turns.
+Whether a turn has been answered is read from the conversation itself. When a
+conversation becomes pending the plugin notes the turn it is handing over; the
+next bot message newer than that turn means it is done, and the conversation
+stops being pending until someone writes again. A turn that arrives while a run
+is in progress stays pending — Apiary's live-instance guard holds it until the
+run ends, and the next dispatch carries it. Apiary's `acknowledge` (sent only
+when `settings.state_lock` is on) marks the same thing earlier when it arrives.
+
+A run that never replies would otherwise re-run on every poll; after 120
+emissions of the same turn (about half an hour at 15s polls) the plugin gives
+up on it and logs that.
 
 `max_per_poll` bounds how many conversations are emitted per poll; the rest are
 emitted next time, in a stable order.
